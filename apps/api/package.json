@@ -1,0 +1,22 @@
+{
+  "name": "chromadb-api",
+  "version": "0.1.0",
+  "type": "module",
+  "entryPoint": "index.ts",
+  "scripts": {
+    "dev": "tsx watch index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@chroma-core/default-embed": "^0.1.8",
+    "chromadb": "^3.0.14",
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.3.0",
+    "tsx": "^4.20.4",
+    "typescript": "^5.9.2"
+  }
+}
