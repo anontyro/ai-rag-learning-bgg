@@ -182,11 +182,120 @@ Checkpoint:
 - Minimal Express endpoints: `/version`, `/db/heartbeat`, `/collections/:name/ingest`, `/collections/:name/search`, `/games/top`.
 - A small golden set and notes on your retrieval configuration (top‑k, filters, model choice if using embeddings).
 
-## Preview: Part 2 — Bridge to Ollama (Local Models)
-- Use Dockerized Ollama (`http://localhost:11434`) to run local models for generation and optionally embeddings.
-- Orchestrate: embed query → search Chroma → build prompt → generate answer.
-- Address prompt templates, context windows, and streaming responses.
-- Explore RAG patterns: stuff, map‑reduce, refine; and optional re‑ranking.
+## Milestone 2 — Ollama + Embeddings + Hybrid Retrieval (Local, Boardgames)
+
+Objectives:
+- Run Ollama in Docker and select an embedding model suitable for recommendations.
+- Embed `boardgames` documents and enable vector similarity in Chroma.
+- Implement hybrid retrieval: combine metadata filters (players/time/categories) with vector search; tie‑break using ranks.
+- Compare model and parameter choices (top‑k, filters, fusion) on a small golden set.
+
+Readings:
+- Ollama HTTP API (embeddings & generation): https://github.com/ollama/ollama/blob/main/docs/api.md
+- Embedding models overview: `nomic-embed-text`, `mxbai-embed-large` (quality vs. speed tradeoffs).
+- Chroma query parameters: `where`, `whereDocument`, vector similarity and distances.
+
+Hands-on:
+- Verify Dockerized Ollama is up and models are available:
+  - `docker compose up -d ollama`
+  - `docker exec -it ollama ollama pull nomic-embed-text`
+  - Optional LLM for later: `docker exec -it ollama ollama pull llama3.1:8b`
+- Embed and ingest:
+  - Run: `pnpm ingest:games:small` to validate pipeline, then `pnpm ingest:games:embed` for ~1k rows.
+  - Track embedding model name and dimensionality at collection level (notes/README).
+- Add hybrid retrieval in `apps/api/index.ts`:
+  - Implement a helper `hybridSearch()` that:
+    - Embeds the user query via `OLLAMA_URL/api/embeddings`.
+    - Calls `collection.query` with `where` filters from request (e.g., categories/mechanics, `minplayers<=x`, `maxplayers>=y`, `playingtime<=z`, `is_expansion=false`).
+    - Uses `n_results` in the 8–20 range; return ids, scores, docs, metadatas.
+    - Optionally tie‑break by rank field if provided (e.g., `familygames_rank`).
+  - Expose GET `/games/search` with query params:
+    - `q`, `k`, `categories`, `mechanics`, `players`, `maxTime`, `rankField`, `expansion` (default false).
+- Compare retrieval modes on a few queries:
+  - Pure semantic vs. metadata‑filtered vs. hybrid.
+  - Measure top‑k hit rate on the golden set below.
+
+Golden set (initial draft, extend as you go):
+- Q1: "Top 10 family games" → Expect many with low `familygames_rank`.
+- Q2: "I want sci‑fi wargames" → Filter category contains `Science Fiction` and prefer `wargames_rank`.
+- Q3: "Best 2‑player under 45 minutes" → `minplayers<=2 && maxplayers>=2` and `playingtime<=45`.
+- Q4: "Cooperative legacy games like Pandemic" → Semantic similarity on description with cooperative/legacy cues.
+
+Deliverables:
+- Embedding backfill complete for the `boardgames` collection (at least 1k rows).
+- `GET /games/search` in `apps/api/index.ts` using hybrid retrieval and returning:
+  - `{ ids, documents, metadatas, distances, usedFilters, model }`.
+- Notes in `docs/` on chosen embedding model and parameter defaults (k, filters, fusion logic).
+
+Acceptance criteria:
+- Chroma returns meaningful semantic neighbors for dataset queries (manual spot‑check several results).
+- Hybrid retrieval answers:
+  - "Top 10 family games" with relevant titles and good rank ordering.
+  - "Sci‑fi wargames suggestions" with sci‑fi category present and wargame relevance.
+  - "Best 2‑player under 45 min" meeting numeric constraints.
+- Latency acceptable on local machine (e.g., < 500ms for k=10 after warmup on ~1k docs; adjust to your hardware).
+
+Tips:
+- Normalize categories/mechanics (trim, consistent casing) during ingest to make filters reliable.
+- Exclude expansions by default (`is_expansion=false`) unless explicitly requested.
+- Keep a simple score fusion: sort by vector similarity; if `rankField` provided, stable sort ties by ascending rank.
+
+## Milestone 3 — RAG Chat Endpoint (API bridge to Ollama)
+
+Objectives:
+- Build a `/chat` endpoint in `apps/api/index.ts` that performs RAG over the `boardgames` collection.
+- Reuse hybrid retrieval from Milestone 2, assemble a concise prompt, and generate with Ollama LLM.
+- Return grounded answers with citations (ids/names/ranks) and support streaming text responses.
+- Provide a fast path for purely structured requests (e.g., "Top 10 family games") without invoking the LLM.
+
+Readings:
+- Ollama Generate API (streaming, parameters): https://github.com/ollama/ollama/blob/main/docs/api.md
+- Prompting for recommendations and citations (short, factual, grounded outputs).
+- Token budgeting basics (keep context small; use top‑K 6–10, short snippets).
+
+Hands-on:
+- Retrieval helper:
+  - Extract `hybridSearch()` (from Milestone 2) into a module and import in the API.
+  - Input: `{ q, k, filters, rankField }`; Output: `{ results, usedFilters }` with ids, documents, metadatas, distances.
+- Prompt template:
+  - Create `apps/api/prompts/recommendations.txt` with guidance:
+    - Role: expert boardgame recommender.
+    - Use only provided context; avoid hallucinations.
+    - Format: short bullet points (title — why), then "Sources" list with ids/titles.
+    - Respect constraints: players/time/categories/mechanics, exclude expansions by default.
+- API endpoint:
+  - POST `/chat`
+    - Body: `{ q: string, k?: number, filters?: {...}, rankField?: string, stream?: boolean }`
+    - Steps:
+      1) If `rankField` is provided and `q` matches a known structured intent like "top" queries, short‑circuit: return top N from ranks with sources (no LLM).
+      2) Else run `hybridSearch()` to get top‑K.
+      3) Build a compact context payload for the prompt: for each result include `{id, name, key ranks, categories, mechanics (top 2), players, time}` and a 1–2 sentence snippet from `description`.
+      4) Call Ollama generate (stream if requested) and return `{ answer, sources }`.
+  - Streaming:
+    - For Express, implement Server‑Sent Events (SSE) or chunked response. Start simple: non‑stream JSON first; add streaming as a follow‑up.
+- Examples:
+  - `curl -X POST http://localhost:3000/chat -H 'Content-Type: application/json' -d '{"q":"I want sci-fi wargames","filters":{"categories":["Science Fiction"]},"k":8}'`
+  - `curl -X POST http://localhost:3000/chat -H 'Content-Type: application/json' -d '{"q":"Top 10 family games","rankField":"familygames_rank","k":10}'`
+
+Deliverables:
+- `POST /chat` in `apps/api/index.ts` that:
+  - Accepts query + optional filters and rank preferences.
+  - Uses hybrid retrieval (or structured fast path) and generates with Ollama.
+  - Returns JSON: `{ answer: string, sources: Array<{ id: string, name: string, rank?: number }>, usedFilters, model }`.
+- Prompt template file in `apps/api/prompts/` and a small test harness (curl examples/scripts).
+
+Acceptance criteria:
+- Answers include concise recommendations and a "Sources" section listing at least 3 items for k≥6.
+- For "Top 10 family games" the endpoint can skip LLM and return the ranked list with short reasons (optional) and sources.
+- For "Sci‑fi wargames" the response respects the sci‑fi filter and cites appropriate titles.
+- For "Best 2‑player under 45 min" the response respects numeric constraints and cites appropriate titles.
+- Reasonable latency locally (subject to model size); documentation includes guidance on selecting a smaller LLM if needed.
+
+Tips:
+- Truncate long descriptions in the prompt; prefer a short synthesized snippet per item.
+- De‑duplicate near‑identical expansions unless explicitly requested.
+- Include the embedding model and LLM names in the response for traceability.
+- If retrieval returns empty, respond with a helpful clarification question rather than fabricating results.
 
 ## References & Resources
 - ChromaDB Docs: https://docs.trychroma.com/
