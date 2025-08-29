@@ -8,6 +8,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "enrich:games": "tsx scripts/enrich-boardgames.ts --input=../../data/boardgames_ranks.csv --output=../../data/boardgames_enriched.csv --limit=100",
+    "enrich:games:loop": "tsx scripts/loop-enrich-boardgames.ts --input=../../data/boardgames_ranks.csv --output=../../data/boardgames_enriched.csv --limit=100 --interval=30",
     "ingest:games": "tsx scripts/ingest-boardgames.ts --input=../../data/boardgames_enriched.csv --collection=boardgames --limit=1000",
     "ingest:games:embed": "CHROMA_URL=http://localhost:8000 OLLAMA_URL=http://localhost:11434 tsx scripts/ingest-boardgames.ts --input=../../data/boardgames_enriched.csv --collection=boardgames --limit=1000 --embed --embeddingModel=nomic-embed-text",
     "ingest:games:small": "CHROMA_URL=http://localhost:8000 OLLAMA_URL=http://localhost:11434 tsx scripts/ingest-boardgames.ts --input=../../data/boardgames_enriched.csv --collection=boardgames --limit=200 --embed --embeddingModel=nomic-embed-text"
