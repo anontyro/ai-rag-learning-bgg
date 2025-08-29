@@ -6,12 +6,19 @@
   "scripts": {
     "dev": "tsx watch index.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "enrich:games": "tsx scripts/enrich-boardgames.ts --input=../../data/boardgames_ranks.csv --output=../../data/boardgames_enriched.csv --limit=100",
+    "ingest:games": "tsx scripts/ingest-boardgames.ts --input=../../data/boardgames_enriched.csv --collection=boardgames --limit=1000",
+    "ingest:games:embed": "CHROMA_URL=http://localhost:8000 OLLAMA_URL=http://localhost:11434 tsx scripts/ingest-boardgames.ts --input=../../data/boardgames_enriched.csv --collection=boardgames --limit=1000 --embed --embeddingModel=nomic-embed-text",
+    "ingest:games:small": "CHROMA_URL=http://localhost:8000 OLLAMA_URL=http://localhost:11434 tsx scripts/ingest-boardgames.ts --input=../../data/boardgames_enriched.csv --collection=boardgames --limit=200 --embed --embeddingModel=nomic-embed-text"
   },
   "dependencies": {
     "@chroma-core/default-embed": "^0.1.8",
     "chromadb": "^3.0.14",
-    "express": "^5.1.0"
+    "express": "^5.1.0",
+    "csv-parse": "^5.5.6",
+    "csv-stringify": "^6.5.2",
+    "fast-xml-parser": "^4.4.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.3",
